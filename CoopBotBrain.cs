@@ -285,8 +285,16 @@ namespace CoopBot
 
         // ---- Targeting ----
 
+        private AIActor m_lockedEnemy;
+
         private AIActor PickEnemy(RoomHandler room, Vector2 pos)
         {
+            if (m_lockedEnemy != null)
+            {
+                var le = m_lockedEnemy;
+                if (le.healthHaver == null || le.healthHaver.IsDead || !le.isActiveAndEnabled || le.specRigidbody == null) m_lockedEnemy = null;
+                else return le;
+            }
             if (room == null) return null;
             List<AIActor> list = room.GetActiveEnemies(RoomHandler.ActiveEnemyType.All);
             if (list == null) return null;
@@ -1104,6 +1112,29 @@ namespace CoopBot
             }
 
             Vector2 primPos = prim.specRigidbody.UnitCenter;
+
+            RoomHandler eroom = prim.CurrentRoom;
+            if (eroom != null)
+            {
+                var foes = eroom.GetActiveEnemies(RoomHandler.ActiveEnemyType.All);
+                AIActor pick = null; float pd = 2.2f;
+                if (foes != null)
+                    for (int i = 0; i < foes.Count; i++)
+                    {
+                        AIActor e = foes[i];
+                        if (e == null || e.healthHaver == null || e.healthHaver.IsDead || e.IsHarmlessEnemy || e.CompanionOwner != null || e.specRigidbody == null) continue;
+                        float d = Vector2.Distance(e.specRigidbody.UnitCenter, cursor);
+                        if (d < pd) { pd = d; pick = e; }
+                    }
+                if (pick != null)
+                {
+                    m_lockedEnemy = pick;
+                    if (m_order != OrderKind.None) EndOrder(null);
+                    CoopBotPlugin.Say("Bot: targeting that enemy.");
+                    return;
+                }
+            }
+
             Component bestComp = null;
             IPlayerInteractable bestIx = null;
             float bestScore = float.MaxValue;

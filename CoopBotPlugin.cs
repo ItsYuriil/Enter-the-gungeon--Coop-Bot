@@ -430,7 +430,13 @@ namespace CoopBot
         public static void Postfix(PlayerController __instance, ref bool __result)
         {
             var brain = CoopBotPlugin.Brain;
-            if (brain != null && brain.Bot == __instance) __result = true;
+            if (brain == null || brain.Bot == null) return;
+            var prim = GameManager.Instance.PrimaryPlayer;
+            bool primDown = prim != null && (prim.IsGhost || prim.healthHaver.IsDead);
+            bool botDown = brain.Bot.IsGhost || brain.Bot.healthHaver.IsDead;
+            // Follow the bot when the player is down; otherwise follow the player only.
+            if (primDown && !botDown) __result = (__instance == prim);
+            else if (brain.Bot == __instance) __result = true;
         }
     }
 
