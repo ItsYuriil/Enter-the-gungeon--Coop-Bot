@@ -1,0 +1,5 @@
+G:\Cosas AI\Modding\Mod Enter the gungeon\coop bots\obj\Release\net35\CoopBot.csproj.AssemblyReference.cache
+G:\Cosas AI\Modding\Mod Enter the gungeon\coop bots\obj\Release\net35\CoopBot.GeneratedMSBuildEditorConfig.editorconfig
+G:\Cosas AI\Modding\Mod Enter the gungeon\coop bots\obj\Release\net35\CoopBot.csproj.CoreCompileInputs.cache
+G:\Cosas AI\Modding\Mod Enter the gungeon\coop bots\bin\Release\net35\CoopBot.dll
+G:\Cosas AI\Modding\Mod Enter the gungeon\coop bots\obj\Release\net35\CoopBot.dll

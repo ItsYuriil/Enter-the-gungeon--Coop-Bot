@@ -1,0 +1,10 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "?": true,
+        "%": true,
+        "where.exe": true,
+        "um": true,
+        "Get-Process": true,
+        "Get-Item": true
+    }
+}
