@@ -63,6 +63,7 @@ Save files: the bot's run record is `coopbot_run_<guid>.json` and its dismissed 
 
 ## License
 
-Copyright (c) 2026 ItsYuriil. All rights reserved.
+Copyright (c) 2026 ItsYuriil. All rights reserved. See [LICENSE](LICENSE).
 
-This code and its source are not open source. No one may use, copy, modify, merge, publish, distribute, sublicense, sell, or create derivative works from this mod, its code, or its source without the express written authorization of the author, ItsYuriil.
+- **Allowed:** use the mod, compiled or from source, for personal, non-commercial play.
+- **Not allowed without the author's prior written authorization:** distributing or hosting it, modifying it or publishing modifications, and selling it or using it commercially.
