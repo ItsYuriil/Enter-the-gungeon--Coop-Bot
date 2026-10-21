@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace CoopBot
 {
-    [BepInPlugin(Guid, "Coop Bot", "1.0.0")]
+    [BepInPlugin(Guid, "Coop Bot", "1.1.0")]
     public class CoopBotPlugin : BaseUnityPlugin
     {
         public const string Guid = "com.coopbot.etg";
@@ -22,6 +22,9 @@ namespace CoopBot
         public static ConfigEntry<KeyCode> DropKey;
         public static ConfigEntry<KeyCode> ItemKey;
         public static ConfigEntry<KeyCode> DropItemKey;
+        public static ConfigEntry<KeyCode> TradeItemKey;
+        public static ConfigEntry<KeyCode> TradeGunKey;
+        public static ConfigEntry<KeyCode> WeaponListKey;
         public static ConfigEntry<float> CoverPreference;
 
         private string m_message = "";
@@ -40,10 +43,21 @@ namespace CoopBot
             DropKey = Config.Bind("Controls", "DropWeaponKey", KeyCode.N, "Makes the bot drop its equipped weapon.");
         ItemKey = Config.Bind("Controls", "UseItemKey", KeyCode.U, "Makes the bot use its active item.");
         DropItemKey = Config.Bind("Controls", "DropItemKey", KeyCode.B, "Makes the bot drop its active item.");
+        TradeItemKey = Config.Bind("Controls", "TradeItemKey", KeyCode.T, "Swap active items with the bot (stand next to it).");
+        WeaponListKey = Config.Bind("Controls", "WeaponListKey", KeyCode.Y, "Opens the bot's weapon list: click a weapon to make it the one the bot holds. (Y: the game uses I for its equipment menu.)");
+        TradeGunKey = Config.Bind("Controls", "TradeGunKey", KeyCode.X, "Swap your equipped weapon with the bot's (stand next to it). Starting weapons can't be traded.");
         CoverPreference = Config.Bind("Bot", "CoverPreference", 0.5f, new ConfigDescription("How much the bot prefers hiding behind cover (0 = never, 1 = a lot).", new AcceptableValueRange<float>(0f, 1f)));
         ShowHints = Config.Bind("UI", "ShowHints", true, "Show on-screen messages from the bot.");
             new Harmony(Guid).PatchAll(typeof(BotInputPatch)); new Harmony(Guid + ".doors").PatchAll(typeof(DoorDistancePatch)); new Harmony(Guid + ".cam").PatchAll(typeof(BotCameraPatch)); new Harmony(Guid + ".die").PatchAll(typeof(PrimaryDeathPatch)); new Harmony(Guid + ".clear").PatchAll(typeof(ClearGameDataPatch)); new Harmony(Guid + ".clear2").PatchAll(typeof(LoadSelectPatch));
+            new Harmony(Guid + ".save").PatchAll(typeof(MidgameSaveHook)); new Harmony(Guid + ".continue").PatchAll(typeof(ContinueBotHook)); new Harmony(Guid + ".newrun").PatchAll(typeof(NewRunHook)); new Harmony(Guid + ".dmg").PatchAll(typeof(BotDamageLog));
+            BotSpawner.Saved = BotPersistence.ReadLoadout();
             Logger.LogInfo("Coop Bot loaded. Press " + OrderKey.Value + " in a run.");
+        }
+
+        // Log file only (BepInEx LogOutput.log), not on screen.
+        public static void Log(string text)
+        {
+            if (Instance != null) Instance.Logger.LogInfo(text);
         }
 
         public static void Say(string text)
@@ -58,8 +72,6 @@ namespace CoopBot
         {
             if (!GameManager.HasInstance) return;
             var gm = GameManager.Instance;
-
-            if (gm.IsFoyer) BotSpawner.Saved = null;
 
             if (Brain != null && (Brain.Bot == null || gm.IsFoyer || gm.PrimaryPlayer == null))
             {
@@ -90,6 +102,22 @@ namespace CoopBot
             if (Input.GetKeyDown(DropKey.Value) && Brain != null && !gm.IsPaused && !gm.IsLoadingLevel)
             {
                 Brain.DropNow();
+                return;
+            }
+            if (m_weaponListOpen && (Brain == null || gm.IsPaused || gm.IsLoadingLevel)) SetWeaponListOpen(false);
+            if (Input.GetKeyDown(WeaponListKey.Value) && Brain != null && !gm.IsPaused && !gm.IsLoadingLevel)
+            {
+                SetWeaponListOpen(!m_weaponListOpen);
+                return;
+            }
+            if (Input.GetKeyDown(TradeItemKey.Value) && Brain != null && !gm.IsPaused && !gm.IsLoadingLevel)
+            {
+                Brain.TradeItemNow();
+                return;
+            }
+            if (Input.GetKeyDown(TradeGunKey.Value) && Brain != null && !gm.IsPaused && !gm.IsLoadingLevel)
+            {
+                Brain.TradeGunNow();
                 return;
             }
             if (!Input.GetKeyDown(OrderKey.Value)) return;
@@ -146,6 +174,9 @@ namespace CoopBot
                 new KeyValuePair<string, ConfigEntry<KeyCode>>("Drop weapon", DropKey),
                 new KeyValuePair<string, ConfigEntry<KeyCode>>("Use active item", ItemKey),
                 new KeyValuePair<string, ConfigEntry<KeyCode>>("Drop active item", DropItemKey),
+                new KeyValuePair<string, ConfigEntry<KeyCode>>("Trade active items", TradeItemKey),
+                new KeyValuePair<string, ConfigEntry<KeyCode>>("Trade weapon", TradeGunKey),
+                new KeyValuePair<string, ConfigEntry<KeyCode>>("Bot weapon list", WeaponListKey),
             };
             Event e = Event.current;
             if (m_rebinding != null && e.type == EventType.KeyDown && e.keyCode != KeyCode.None)
@@ -170,9 +201,129 @@ namespace CoopBot
             CoverPreference.Value = GUI.HorizontalSlider(new Rect(220, 116 + entries.Length * 38, 190, 20), CoverPreference.Value, 0f, 1f);
         }
 
+        // Weapon list: the screen goes dark except the bot's weapon HUD (bottom right), and the bot's guns are listed above it.
+        // Clicking one makes it the gun the bot holds. While the list is open the player cannot move or shoot.
+        private bool m_weaponListOpen;
+        private PlayerController m_lockedPlayer;
+        private const string WeaponListLock = "coopbot weapon list";
+        private static Texture2D s_pixel;
+
+        private void SetWeaponListOpen(bool open)
+        {
+            if (open == m_weaponListOpen) return;
+            m_weaponListOpen = open;
+            if (open)
+            {
+                m_lockedPlayer = GameManager.Instance.PrimaryPlayer;
+                if (m_lockedPlayer != null) m_lockedPlayer.SetInputOverride(WeaponListLock);
+            }
+            else
+            {
+                if (m_lockedPlayer != null) m_lockedPlayer.ClearInputOverride(WeaponListLock);
+                m_lockedPlayer = null;
+            }
+        }
+
+        private static Texture2D Pixel()
+        {
+            if (s_pixel == null)
+            {
+                s_pixel = new Texture2D(1, 1);
+                s_pixel.SetPixel(0, 0, Color.white);
+                s_pixel.Apply();
+            }
+            return s_pixel;
+        }
+
+        private static void FillRect(Rect r, Color c)
+        {
+            GUI.color = c;
+            GUI.DrawTexture(r, Pixel());
+            GUI.color = Color.white;
+        }
+
+        private void DrawWeaponList()
+        {
+            if (!m_weaponListOpen || Brain == null || Brain.Bot == null || GameManager.Instance.IsPaused) return;
+            float W = Screen.width, H = Screen.height;
+
+            // Where the bot's weapon/item HUD sits: bottom right. Tune these fractions if the spotlight misses it.
+            var hole = new Rect(W * 0.56f, H * 0.80f, W * 0.44f, H * 0.20f);
+            var dim = new Color(0f, 0f, 0f, 0.78f);
+            FillRect(new Rect(0f, 0f, W, hole.y), dim);
+            FillRect(new Rect(0f, hole.yMax, W, H - hole.yMax), dim);
+            FillRect(new Rect(0f, hole.y, hole.x, hole.height), dim);
+            FillRect(new Rect(hole.xMax, hole.y, W - hole.xMax, hole.height), dim);
+            var edge = new Color(1f, 0.85f, 0.35f, 0.9f);
+            FillRect(new Rect(hole.x, hole.y, hole.width, 2f), edge);
+            FillRect(new Rect(hole.x, hole.yMax - 2f, hole.width, 2f), edge);
+            FillRect(new Rect(hole.x, hole.y, 2f, hole.height), edge);
+            FillRect(new Rect(hole.xMax - 2f, hole.y, 2f, hole.height), edge);
+
+            var guns = Brain.Bot.inventory.AllGuns;
+            const float rowH = 46f;
+            float listH = Mathf.Max(1, guns.Count) * rowH + 44f;
+            var list = new Rect(hole.x, Mathf.Max(8f, hole.y - listH - 12f), hole.width, listH);
+            GUI.Box(list, "Bot weapons (click to hold, " + WeaponListKey.Value + " closes)");
+            if (guns.Count == 0)
+            {
+                GUI.Label(new Rect(list.x + 12f, list.y + 40f, list.width - 24f, 28f), "No weapons.");
+                return;
+            }
+            Gun current = Brain.Bot.CurrentGun;
+            if (s_rowStyle == null) s_rowStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleLeft };
+            for (int i = 0; i < guns.Count; i++)
+            {
+                Gun g = guns[i];
+                if (g == null) continue;
+                bool isCurrent = g == current;
+                string label = g.gunName + "   " + g.CurrentAmmo + "/" + g.AdjustedMaxAmmo
+                    + (CoopBotBrain.IsStartingGun(Brain.Bot, g) ? "  (starting)" : "");
+                var row = new Rect(list.x + 10f, list.y + 40f + i * rowH, list.width - 20f, rowH - 8f);
+                if (isCurrent) FillRect(row, new Color(1f, 0.85f, 0.35f, 0.35f));
+                if (GUI.Button(row, "")) Brain.SelectGun(g);
+                DrawGunIcon(g, new Rect(row.x + 6f, row.y + 4f, 64f, row.height - 8f));
+                GUI.Label(new Rect(row.x + 76f, row.y, row.width - 80f, row.height), (isCurrent ? "> " : "  ") + label, s_rowStyle);
+            }
+        }
+
+        private static GUIStyle s_rowStyle;
+
+        // The gun's own sprite from the game's atlas, fitted into r. Returns false if the gun has no usable sprite.
+        private static bool DrawGunIcon(Gun g, Rect r)
+        {
+            try
+            {
+                tk2dBaseSprite spr = g.GetSprite();
+                if (spr == null) return false;
+                tk2dSpriteDefinition def = spr.CurrentSprite;
+                if (def == null || def.materialInst == null || def.uvs == null || def.uvs.Length < 4) return false;
+                Texture tex = def.materialInst.mainTexture;
+                if (tex == null) return false;
+
+                float minX = 1f, minY = 1f, maxX = 0f, maxY = 0f;
+                foreach (Vector2 uv in def.uvs)
+                {
+                    minX = Mathf.Min(minX, uv.x); minY = Mathf.Min(minY, uv.y);
+                    maxX = Mathf.Max(maxX, uv.x); maxY = Mathf.Max(maxY, uv.y);
+                }
+                float aspect = (maxX - minX) * tex.width / Mathf.Max(1f, (maxY - minY) * tex.height);
+                float hh = Mathf.Min(r.height, r.width / Mathf.Max(0.01f, aspect));
+                float ww = hh * aspect;
+                var fit = new Rect(r.x + (r.width - ww) / 2f, r.y + (r.height - hh) / 2f, ww, hh);
+                GUI.DrawTextureWithTexCoords(fit, tex, Rect.MinMaxRect(minX, minY, maxX, maxY), true);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         private void OnGUI()
         {
             DrawBotMenu();
+            DrawWeaponList();
             if (!ShowHints.Value || Time.realtimeSinceStartup > m_messageUntil) return;
             if (m_style == null)
             {
@@ -225,9 +376,34 @@ namespace CoopBot
 
             var brain = go.AddComponent<CoopBotBrain>();
             brain.Bot = bot;
+            brain.Character = CoopBotPlugin.Character.Value;
             CoopBotPlugin.Brain = brain;
             gm.StartCoroutine(FinishSpawn(bot));
             CoopBotPlugin.Say("Bot online. H: order it to interact with what you point at. Shift+H: dismiss.");
+        }
+
+        // Continue path: the game has just rebuilt a placeholder co-op partner from the save. Replace it with the bot.
+        // The bot's gear comes from the save itself (the game restores the partner's items when the floor loads),
+        // so the dismissed loadout is not applied here.
+        public static void AdoptForContinue(BotCharacter character)
+        {
+            var gm = GameManager.Instance;
+            gm.ClearSecondaryPlayer();
+
+            var prefab = (GameObject)BraveResources.Load(PrefabName(character));
+            var go = UnityEngine.Object.Instantiate(prefab, Vector3.zero, Quaternion.identity);
+            go.SetActive(true);
+            var bot = go.GetComponent<PlayerController>();
+            bot.ActorName = "Player ID 1";
+            bot.PlayerIDX = 1;
+            gm.SecondaryPlayer = bot;
+            gm.RefreshAllPlayers();
+
+            var brain = go.AddComponent<CoopBotBrain>();
+            brain.Bot = bot;
+            brain.Character = character;
+            CoopBotPlugin.Brain = brain;
+            Saved = null;
         }
 
         private static System.Collections.IEnumerator FinishSpawn(PlayerController bot)
@@ -246,6 +422,7 @@ namespace CoopBot
             if (bot != null && Saved != null) Restore(bot, Saved);
         }
 
+        [Serializable]
         public class Loadout
         {
             public List<int> Guns = new List<int>();
@@ -352,6 +529,7 @@ namespace CoopBot
                 if (!gm.IsFoyer && !brain.Bot.healthHaver.IsDead && !brain.Bot.IsGhost)
                 {
                     try { Save(brain.Bot); } catch (Exception) { }
+                    if (Saved != null) BotPersistence.WriteLoadout(Saved);
                 }
                 brain.Bot.SetInputOverride("coopbot dismissed");
                 UnityEngine.Object.Destroy(brain.Bot.gameObject);
